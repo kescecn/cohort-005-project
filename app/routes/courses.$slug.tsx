@@ -518,12 +518,16 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let lessonProgressMap: Record<number, string> = {};
   let nextLessonId: number | null = null;
   let refundOffer: { amount: number; lastDayInWindow: string } | null = null;
+  let refundUnderReview = false;
 
   if (currentUserId) {
     enrolled = isUserEnrolled(currentUserId, course.id);
 
     if (enrolled) {
       refundOffer = getRefundOffer(currentUserId, { id: course.id });
+      const latestPurchase = getPurchaseForCourse(currentUserId, course.id);
+      refundUnderReview =
+        !!latestPurchase && !!getOpenRefundRequest(latestPurchase.id);
 
       progress = calculateProgress(currentUserId, course.id, false);
 
@@ -568,6 +572,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ratingSummary,
     userRating,
     refundOffer,
+    refundUnderReview,
   };
 }
 
@@ -669,6 +674,7 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     ratingSummary,
     userRating,
     refundOffer,
+    refundUnderReview,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -880,6 +886,13 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                       style={{ width: `${progress}%` }}
                     />
                   </div>
+                  {refundUnderReview ? (
+                    <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                      Your refund request is under review. Your access to this
+                      course is paused until we decide.
+                    </p>
+                  ) : (
+                    <>
                   {course.modules.length > 0 &&
                     (() => {
                       const targetLessonId =
@@ -903,6 +916,8 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                       Buy More Seats
                     </Button>
                   </Link>
+                    </>
+                  )}
                   <RateCourse userRating={userRating} />
                   {refundOffer && (
                     <RequestRefund

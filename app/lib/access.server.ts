@@ -1,5 +1,5 @@
 import { data } from "react-router";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "~/db";
 import {
   UserRole,
@@ -7,6 +7,8 @@ import {
   courses,
   enrollments,
   purchases,
+  refunds,
+  RefundStatus,
 } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
@@ -42,6 +44,30 @@ function findPurchase(userId: number, courseId: number) {
     .get();
 }
 
+// Course Access is suspended while the learner's latest purchase of the course
+// has an Open Refund Request — see docs/adr/0001.
+function hasOpenRefundRequest(userId: number, courseId: number) {
+  const latestPurchase = db
+    .select()
+    .from(purchases)
+    .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
+    .orderBy(desc(purchases.createdAt), desc(purchases.id))
+    .get();
+
+  if (!latestPurchase) return false;
+
+  return !!db
+    .select({ id: refunds.id })
+    .from(refunds)
+    .where(
+      and(
+        eq(refunds.purchaseId, latestPurchase.id),
+        eq(refunds.status, RefundStatus.Open)
+      )
+    )
+    .get();
+}
+
 // ─── Access Resolution ───
 // One place that answers "who is this, and what may they do with this course?".
 //
@@ -60,6 +86,8 @@ export type Access = {
   /** Owning instructor or admin — the people who speak for the course. */
   isStaff: boolean;
   enrolled: boolean;
+  /** Enrolled, but suspended because a Refund Request is under review. */
+  refundUnderReview: boolean;
   pppBlocked: boolean;
   pppBlockedCountry: string | null;
   pppPurchaseCountry: string | null;
@@ -77,6 +105,7 @@ const SIGNED_OUT: Access = {
   isOwningInstructor: false,
   isStaff: false,
   enrolled: false,
+  refundUnderReview: false,
   pppBlocked: false,
   pppBlockedCountry: null,
   pppPurchaseCountry: null,
@@ -98,6 +127,8 @@ export async function getAccess(
   const isOwningInstructor = course?.instructorId === userId;
   const isStaff = isAdmin || isOwningInstructor;
   const enrolled = isUserEnrolled(userId, courseId);
+  const refundUnderReview =
+    enrolled && !isStaff && hasOpenRefundRequest(userId, courseId);
 
   // PPP only restricts students who bought at a discount — staff are exempt.
   let ppp = {
@@ -124,10 +155,12 @@ export async function getAccess(
     isOwningInstructor,
     isStaff,
     enrolled,
+    refundUnderReview,
     pppBlocked: ppp.blocked,
     pppBlockedCountry: ppp.blockedCountry,
     pppPurchaseCountry: ppp.purchaseCountry,
-    canViewContent: isStaff || (enrolled && !ppp.blocked),
+    canViewContent:
+      isStaff || (enrolled && !refundUnderReview && !ppp.blocked),
   };
 }
 

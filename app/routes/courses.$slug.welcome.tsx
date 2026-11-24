@@ -10,6 +10,7 @@ import {
   enrollments,
 } from "~/db/schema";
 import { eq, and, or } from "drizzle-orm";
+import { getAccess } from "~/lib/access.server";
 import { getCurrentUserId } from "~/lib/session";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -77,17 +78,6 @@ function getCourseWithDetails(id: number) {
   };
 }
 
-function isUserEnrolled(userId: number, courseId: number) {
-  const enrollment = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-  return !!enrollment;
-}
-
 export function meta({ loaderData }: Route.MetaArgs) {
   const title = loaderData?.course?.title ?? "Welcome";
   return [
@@ -109,7 +99,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw redirect(`/courses/${slug}`);
   }
 
-  if (!isUserEnrolled(currentUserId, course.id)) {
+  const access = await getAccess(request, course.id);
+  if (!access.enrolled || !access.canViewContent) {
     throw redirect(`/courses/${slug}`);
   }
 
